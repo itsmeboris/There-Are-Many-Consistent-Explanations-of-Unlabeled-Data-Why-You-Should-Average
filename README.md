@@ -1,5 +1,6 @@
 # There-Are-Many-Consistent-Explanations-of-Unlabeled-Data-Why-You-Should-Average
 ### By Boris Sobol & Ariel Amsel
+***Only Fast-swa was implemented***
 
 ## How to Run:
 1. Create a folder named Datasets and fill with directories of datasets to run. Each directory must be in pytorch image loader format https://pytorch.org/docs/stable/data.html
