@@ -111,7 +111,7 @@ class ShakeShakeBlock(nn.Module):
         self.downsample = downsample
         self.stride = stride
 
-    def forward(self, x) :
+    def forward(self, x):
         a, b, residual = x, x, x
 
         a = F.relu(a, inplace=False)
@@ -197,11 +197,10 @@ def mt_shake_shake_params():
             "weight_decay": 2e-4,
             "nesterov": True,
         },
-        "epoch_args": 1,  # 180,
+        "epoch_args": 60,  # 180,
         # "batch_size": 128,
         # "labeled_batch_Size": 31,
-        "lr_rampdown_epochs": 210,
-        "lr_rampdown_steps": 1800,
+        "lr_rampdown_epochs": 210//3,  # because the epochs is 60 = 180//3
         "constant_lr_epoch": 0,
         "mt_distance_cost": 0.01,
         "cycle_interval": 5,  # 30,

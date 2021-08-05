@@ -15,7 +15,7 @@ DATASETS_DIR = "Datasets"
 
 
 def main_alex_net(dataset_name, unlabeled_train, unlabeled_val, labeled_train, labeled_val,
-                  classes, fold_num, out_dir, epochs=80):
+                  classes, fold_num, out_dir, epochs=40):
     AlexNet_Model = torchvision.models.alexnet(pretrained=True)   # torch.hub.load('pytorch/vision:v0.6.0', 'alexnet', pretrained=True)
     AlexNet_Model.eval()
     AlexNet_Model.classifier[1] = nn.Linear(9216, 4096)
@@ -24,35 +24,34 @@ def main_alex_net(dataset_name, unlabeled_train, unlabeled_val, labeled_train, l
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     AlexNet_Model.to(device)
     log_name = f"{out_dir}/AlexNet_{dataset_name}_log.log"
-    train_time = train_alex_net(AlexNet_Model, [unlabeled_train, labeled_train], epochs, device)
+    train_time = train_alex_net(AlexNet_Model, labeled_train, epochs, device)
     dump_to_log({fold_num: {"train_time": train_time}}, log_name)
     eval_ans = eval_model(AlexNet_Model, "AlexNet_Model", [unlabeled_val, labeled_val], classes, fold_num,
                           dataset_name, out_dir=out_dir)
     dump_to_log(eval_ans, log_name)
 
 
-def train_alex_net(AlexNet_Model, train_loaders, epochs, device):
+def train_alex_net(AlexNet_Model, train_loader, epochs, device):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(AlexNet_Model.parameters(), lr=0.001, momentum=0.9)
     start_time = time.time()
     for epoch in range(epochs):  # loop over the dataset multiple times
         running_loss = 0.0
-        for curr_train_loader in train_loaders:
-            for i, data in enumerate(curr_train_loader, 0):
-                # get the inputs; data is a list of [inputs, labels]
-                inputs, labels = data[0].to(device), data[1].to(device)
-                # zero the parameter gradients
-                optimizer.zero_grad()
-                # forward + backward + optimize
-                output = AlexNet_Model(inputs)
-                loss = criterion(output, labels)
-                loss.backward()
-                optimizer.step()
-                # print statistics
-                running_loss += loss.item()
-                if i % 2000 == 1999:  # print every 2000 mini-batches
-                    print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 2000))
-                    running_loss = 0.0
+        for i, data in enumerate(train_loader, 0):
+            # get the inputs; data is a list of [inputs, labels]
+            inputs, labels = data[0].to(device), data[1].to(device)
+            # zero the parameter gradients
+            optimizer.zero_grad()
+            # forward + backward + optimize
+            output = AlexNet_Model(inputs)
+            loss = criterion(output, labels)
+            loss.backward()
+            optimizer.step()
+            # print statistics
+            running_loss += loss.item()
+            if i % 2000 == 1999:  # print every 2000 mini-batches
+                print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 2000))
+                running_loss = 0.0
     end_time = time.time()
     print('Finished Training of AlexNet')
     return end_time - start_time
@@ -100,11 +99,6 @@ def train_alex_net(AlexNet_Model, train_loaders, epochs, device):
 
 
 def main():
-    to_skip = ["ASL Alphabet Test", "cifar-10_0", "cifar-10_1", "cifar-10_2", "cifar-10_3", "cifar-10_4",
-               "cifar-100_0", "cifar-100_1", "cifar-100_2", "cifar-100_3", "cifar-100_4",
-               "Female and male eyes_0", "Female and male eyes_1", "Female and male eyes_2",
-               "fruits_0", "fruits_1", "fruits_2", "gemstones", "shapes"
-               ]
     out_dir = "outputs_alex"
     try:
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -113,8 +107,6 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     for dataset_name in os.listdir(DATASETS_DIR):
-        if dataset_name in to_skip:
-            continue
         k_fold = 10
         unlabeled_gen, labeled_gen, classes = load_gen_data_dir(os.path.join(DATASETS_DIR, dataset_name), k_fold,
                                                                 resize=(256, 265))

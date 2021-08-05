@@ -12,6 +12,8 @@ from torch.optim import SGD
 import numpy as np
 from torchmetrics import Accuracy, Precision, Recall
 from Metrics import AreaUnderPrecisionCurve, TprFpr, Time1000Samples, ModifiedF1, SkAucRoc
+from torchvision.transforms.transforms import  ToPILImage, ToTensor
+from DataAugement import RandAugment
 
 from DataLoaders import load_gen_data_dir
 from LossFunctions import softmax_mse_loss, symmetric_mse_loss
@@ -196,7 +198,7 @@ def select_best_hyper_parameters(dataset_name, epochs):
     ######     Best hyperparameters index is 0 !!!!!!!!!
 
 
-def main_original():
+def main_original(idx_to_run):
     """
     Run hyper parameter search for Fast-SWA & Mean-Teacher from original paper on dataset shape.
     Then use best hyper parameters to run 10 fold cross validation on all data sets
@@ -258,8 +260,8 @@ def train_helper_augmented(dataset_name, k_fold, log_name, params, epochs) -> fl
     ans = list()
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     temp_loaders = [load_gen_data_dir(os.path.join(DATASETS_DIR, dataset_name), k_fold),
-                    load_gen_data_dir(os.path.join(DATASETS_DIR, dataset_name), k_fold, augment=True),
-                    load_gen_data_dir(os.path.join(DATASETS_DIR, dataset_name), k_fold, augment=True)]
+                    load_gen_data_dir(os.path.join(DATASETS_DIR, dataset_name), k_fold),
+                    load_gen_data_dir(os.path.join(DATASETS_DIR, dataset_name), k_fold)]
     classes = temp_loaders[0][-1]
     unlabeled_loaders = [curr_temp[0] for curr_temp in temp_loaders]
     labeled_loaders = [curr_temp[1] for curr_temp in temp_loaders]
@@ -273,11 +275,11 @@ def train_helper_augmented(dataset_name, k_fold, log_name, params, epochs) -> fl
                          for _ in range(0, 3)]
         teacher_model = cifar_shakeshake26(pretrained=False, num_classes=len(classes)).to(device)
         swa_model = cifar_shakeshake26(pretrained=False, num_classes=len(classes)).to(device)
-        students = [MeanTeacher(base, teacher, None, dataset_name, **params)
+        students = [MeanTeacher(base, teacher, None, dataset_name, augment_values=(2, 7), **params)
                     for base, teacher in zip(base_models, fake_teachers)]
         ms = MultipleStudents(students, teacher_model, **params)
         fast_swa = FastSWA(ms, swa_model, log_name, dataset_name, **params)
-        fast_swa.train_model_and_swa(curr_unlabeled_loaders, curr_labeled_loaders, epochs, fold_num)
+        fast_swa.train_model_and_swa(curr_unlabeled_loaders, curr_labeled_loaders, epochs, fold_num, use_augment=True)
         curr_ans = fast_swa.eval_swa([curr_unlabeled_loaders[0][1], curr_labeled_loaders[0][1]], classes, fold_num,
                                      "outputs_aug")
         ans.append(curr_ans[fold_num]["accuracy_fast-swa"])
@@ -334,7 +336,7 @@ def select_best_hyper_parameters_augmented(dataset_name, epochs):
     return hyper_parameters[best_hp_idx]
 
 
-def main_augmented(do_id):
+def main_augmented(idx_to_run):
     """
     Run hyper parameter search for Fast-SWA & Mean-Teacher from original paper on dataset shape.
     Then use best hyper parameters to run 10 fold cross validation on all data sets
@@ -347,7 +349,6 @@ def main_augmented(do_id):
         pass
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    ######     Best hyperparameters index is 0 !!!!!!!!!
     epochs = 60
     hp_dataset = "shapes"
     best_params = select_best_hyper_parameters_augmented(hp_dataset, epochs)
@@ -366,8 +367,9 @@ class MeanTeacher:
     Mean-Teache class. For trainign and evaluationg the Mean-Teacher model
     """
     def __init__(self, base_model: nn.Module, teacher_model: nn.Module, log_file_path: str, dataset_name: str,
-                 lr_rampdown_steps, lr_rampdown_epochs, epoch_args, cycle_interval, logit_distance_cost, ema_decay,
-                 num_cycles, optimizer_args, consistency_rampup, consistency, optimizer=SGD, **kwargs):
+                 lr_rampdown_epochs, epoch_args, cycle_interval, logit_distance_cost, ema_decay,
+                 num_cycles, optimizer_args, consistency_rampup, consistency, optimizer=SGD, augment_values=(4, 10),
+                 **kwargs):
 
         # Make teacher untrainable from its own loss
         for param in teacher_model.parameters():
@@ -382,7 +384,6 @@ class MeanTeacher:
         self.epoch = 0
         self.global_step = 0
         self.base_lr = optimizer_args['lr']
-        self.lr_rampdown_steps = lr_rampdown_steps
         self.lr_rampdown_epochs = lr_rampdown_epochs
         self.epoch_args = epoch_args
         self.cycle_interval = cycle_interval
@@ -391,6 +392,7 @@ class MeanTeacher:
         self.num_cycles = num_cycles
         self.consistency_rampup = consistency_rampup
         self.consistency = consistency
+        self.img_augment = RandAugment(*augment_values)
 
     def train(self, data_loader, epochs, val_data_loader, classes, fold_num):
         """
@@ -417,7 +419,7 @@ class MeanTeacher:
         self.dump_to_log(f"Train time for: {self.dataset_name} is: {end_time - start_time}\n"
                          f"----------------------------------\n----------------------------------")
 
-    def _single_train_helper(self, inp, labels):
+    def _single_train_helper(self, inp, labels, use_augment=False):
         """
         Actual training of the student model for a single batch
         :param inp:
@@ -429,12 +431,25 @@ class MeanTeacher:
         consistency_criterion = softmax_mse_loss
         residual_logit_criterion = symmetric_mse_loss
 
-        input_var = torch.autograd.Variable(inp).to(self.device)
+        if not use_augment:
+            input_var_st = torch.autograd.Variable(inp).to(self.device)
+            input_var_teacher = torch.autograd.Variable(inp).to(self.device)
+        else:
+            # Dataloaders must return a tensor, therfore we need to convert back to PIL Image here to allow the
+            # RandAugment transformations
+            imgs = [ToPILImage()(curr) for curr in inp]
+            aug_1 = self.img_augment.transform_list(imgs)
+            aug_2 = self.img_augment.transform_list(imgs)
+            inp_1 = torch.cat([torch.unsqueeze(ToTensor()(curr), dim=0) for curr in aug_1])
+            inp_2 = torch.cat([torch.unsqueeze(ToTensor()(curr), dim=0) for curr in aug_2])
+            input_var_st = torch.autograd.Variable(inp_1).to(self.device)
+            input_var_teacher = torch.autograd.Variable(inp_2).to(self.device)
+
         if labels is not None:
             labels = torch.autograd.Variable(labels).to(self.device)
 
-        model_out_1, model_out_2 = self._base_model(input_var)
-        teacher_out, _ = self._teacher_model(input_var)
+        model_out_1, model_out_2 = self._base_model(input_var_st)
+        teacher_out, _ = self._teacher_model(input_var_teacher)
         teacher_out = Variable(teacher_out.detach().data, requires_grad=False)
 
         class_loss = class_criterion(model_out_1, labels) / batch_size if labels is not None else 0
@@ -449,9 +464,10 @@ class MeanTeacher:
 
         return loss
 
-    def train_single_epoch(self, unlabeled_data_loader, labeled_data_loader):
+    def train_single_epoch(self, unlabeled_data_loader, labeled_data_loader, use_augment=False):
         """
         Train the studen model for a single epoch and update the teacher at the end of the epoch
+        :param use_augment:
         :param unlabeled_data_loader:
         :param labeled_data_loader:
         :return:
@@ -463,11 +479,11 @@ class MeanTeacher:
         steps_per_epoch = len(unlabeled_data_loader) + len(labeled_data_loader)
         for curr_step_in_unlabeled, (inp, _) in enumerate(unlabeled_data_loader):
             self.adjust_learning_rate(curr_step_in_unlabeled, steps_per_epoch)
-            full_loss += self._single_train_helper(inp, None)
+            full_loss += self._single_train_helper(inp, None, use_augment)
 
         for curr_step_in_labeled, (inp, label) in enumerate(labeled_data_loader):
             self.adjust_learning_rate(curr_step_in_labeled + len(unlabeled_data_loader), steps_per_epoch)
-            full_loss += self._single_train_helper(inp, label)
+            full_loss += self._single_train_helper(inp, label, use_augment)
 
         self.global_step += 1
         self.update_teacher_variables()
@@ -545,7 +561,7 @@ class MultipleStudents:
         self.global_step = 0
         self.ema_decay = ema_decay
 
-    def train_single_epoch(self, unlabeled_data_loaders: List, labeled_data_loaders: List):
+    def train_single_epoch(self, unlabeled_data_loaders: List, labeled_data_loaders: List, use_augment: bool):
         """
         Train each student for a single epoch and finally update the mean teacher
         :param unlabeled_data_loaders:
@@ -554,7 +570,7 @@ class MultipleStudents:
         """
         for student, unlabeled_data_loader, labeled_data_loader in zip(self.students, unlabeled_data_loaders,
                                                                        labeled_data_loaders):
-            student.train_single_epoch(unlabeled_data_loader[0], labeled_data_loader[0])
+            student.train_single_epoch(unlabeled_data_loader[0], labeled_data_loader[0], use_augment=use_augment)
         self.global_step += 1
         self.update_teacher()
 
@@ -612,7 +628,8 @@ class FastSWA:
     def reset(self):
         self.num_params = 0
 
-    def train_model_and_swa(self, unlabeled_data_loader, labeled_data_loader, epochs, fold_num):
+    def train_model_and_swa(self, unlabeled_data_loader, labeled_data_loader, epochs, fold_num,
+                            use_augment=False):
         """
         Pre-traind the student model of the Mean-Teacher, then continues training and updates the
         Fast-SWA model when needed
@@ -628,7 +645,7 @@ class FastSWA:
                          f"Running on Dataset: {self.dataset_name}\nRunning on fold: {fold_num}")
         start_time = time.time()
         for epoch in range(0, total_epochs):
-            self.mt.train_single_epoch(unlabeled_data_loader, labeled_data_loader)
+            self.mt.train_single_epoch(unlabeled_data_loader, labeled_data_loader, use_augment=use_augment)
             if epoch >= epochs - self.cycle_interval and\
                     (epoch - self.epoch_args + self.cycle_interval) % self.fastswa_freq == 0:
                 print("update swa")

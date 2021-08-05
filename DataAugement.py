@@ -266,3 +266,9 @@ class RandAugment:
             img = op(img, val)
 
         return img
+
+    def transform_list(self, imgs):
+        ans = list()
+        for img in imgs:
+            ans.append(self.__call__(img))
+        return ans
