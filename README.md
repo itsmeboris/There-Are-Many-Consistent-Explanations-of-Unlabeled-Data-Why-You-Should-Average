@@ -9,13 +9,13 @@
 4. To run AlexNet - python pretrained_model.py
 
 
-## Hyper parameters Choosen:
+## Hyper parameters Choosen for Original Fast-SWA:
 - "optimizer_args":
   - "lr": 0.05,
   - "momentum": 0.9,
   - "weight_decay": 2e-4,
   - "nesterov": True 
-- "epoch_args": 1,  # 180,
+- "epoch_args": 60,
 - "batch_size": 128,
 - "labeled_batch_size_ratio": 0.25,
 - "lr_rampdown_epochs": 210,
@@ -29,6 +29,27 @@
 - "consistency_rampup": 5,
 - "consistency": 100.0,
 - 'fastswa_freq': '3'
+
+## Hyper parameters Choosen for Augmenent Fast-SWA:
+- "optimizer_args":
+  - "lr": 0.05,
+  - "momentum": 0.9,
+  - "weight_decay": 2e-4,
+  - "nesterov": True 
+- "epoch_args": 60,  # 180,
+- "batch_size": 128,
+- "labeled_batch_size_ratio": 0.25,
+- "lr_rampdown_epochs": 70,
+- "lr_rampdown_steps": 1800,
+- "constant_lr_epoch": 0,
+- "mt_distance_cost": 0.01,
+- "cycle_interval": 5,  # 30,
+- "num_cycles": 20,  # 100,
+- "logit_distance_cost": 0.01,
+- 'ema_decay': 0.93,
+- "consistency_rampup": 7,
+- "consistency": 95.0,
+- 'fastswa_freq': '10'
 
 ## References
 1. Athiwaratkun, B., Finzi, M., Izmailov, P., & Wilson, A. G. (2018). There are many consistent explanations of unlabeled data: Why you should average. arXiv preprint arXiv:1806.05594.  github: https://github.com/benathi/fastswa-semi-sup.
